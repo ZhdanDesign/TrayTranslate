@@ -31,10 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(systemSymbolName: "character.bubble", accessibilityDescription: "TrayTranslate")
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.button?.title = "AЯ"
+        statusItem.button?.setAccessibilityLabel("TrayTranslate")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -47,11 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if !hotKey.start() {
             HotKey.requestAccess()
-            // The tap can only be created after the user enables Input Monitoring; retry until then.
-            permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
-                MainActor.assumeIsolated {
-                    if self?.hotKey.start() == true { timer.invalidate() }
-                }
+        }
+        // Permissions can change while the app runs; recover a disabled or invalidated tap as well.
+        permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                _ = self?.hotKey.start()
             }
         }
     }
@@ -73,12 +72,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.sectionHeader(title: "Движок"))
         for e in Engine.allCases {
             let item = ActionItem("\(e.name) (\(e.model))", state: e == engine ? .on : .off) { [weak self] in self?.engine = e }
-            if e.executable() == nil {
+            if e != .openai && e.executable() == nil {
                 item.isEnabled = false
                 item.toolTip = "\(e.rawValue) CLI не найден"
             }
             menu.addItem(item)
         }
+        menu.addItem(ActionItem("API-ключ OpenAI…") { [weak self] in self?.configureOpenAI() })
 
         menu.addItem(.separator())
         let login = SMAppService.mainApp
@@ -96,6 +96,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static func openInputMonitoringSettings() {
         HotKey.requestAccess()
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+    }
+
+    private func configureOpenAI() {
+        let alert = NSAlert()
+        alert.messageText = "API-ключ OpenAI"
+        alert.informativeText = "Ключ сохраняется в Связке ключей macOS и используется для перевода через GPT-4o mini. Введите новый ключ, чтобы заменить сохранённый."
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.placeholderString = "sk-…"
+        field.setAccessibilityLabel("API-ключ OpenAI")
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Сохранить")
+        alert.addButton(withTitle: "Отмена")
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try OpenAI.saveAPIKey(field.stringValue)
+            engine = .openai
+        } catch { NSAlert(error: error).runModal() }
     }
 
     // MARK: Translation

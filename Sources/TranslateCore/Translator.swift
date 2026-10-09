@@ -1,6 +1,6 @@
 import Foundation
 
-/// Runs one translation through a local CLI and reports progress.
+/// Runs one translation through a local CLI or OpenAI API and reports progress.
 /// `onUpdate` gets the accumulated text; exactly one of `onDone`/`onError` fires unless cancelled.
 /// Callbacks run on a private serial queue.
 public final class Translator: @unchecked Sendable {
@@ -9,6 +9,7 @@ public final class Translator: @unchecked Sendable {
     private let process = Process()
     private let queue = DispatchQueue(label: "TrayTranslate.translator")
     private let engine: Engine
+    private var apiTask: URLSessionDataTask?
     private var buffer = Data()
     private var text = ""
     private var final: String?
@@ -24,6 +25,27 @@ public final class Translator: @unchecked Sendable {
     public init(engine: Engine) { self.engine = engine }
 
     public func start(text input: String, direction: Direction) throws {
+        if engine == .openai {
+            guard let key = try OpenAI.apiKey() ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"], !key.isEmpty else {
+                throw Failure(description: "Укажите ключ в меню «API-ключ OpenAI…»")
+            }
+            let request = try OpenAI.request(text: input, direction: direction, apiKey: key)
+            apiTask = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                guard let self else { return }
+                self.queue.async {
+                    do {
+                        if let error { throw error }
+                        guard let data, let response = response as? HTTPURLResponse else {
+                            throw Failure(description: "OpenAI: ответ не получен")
+                        }
+                        self.final = try OpenAI.translation(data: data, status: response.statusCode)
+                    } catch { self.failure = String(describing: error) }
+                    self.finish(status: self.failure == nil ? 0 : 1)
+                }
+            }
+            apiTask?.resume()
+            return
+        }
         guard let exe = engine.executable() else {
             throw Failure(description: "\(engine.rawValue) CLI не найден в ~/.local/bin, /opt/homebrew/bin, /usr/local/bin или PATH")
         }
@@ -57,7 +79,7 @@ public final class Translator: @unchecked Sendable {
     }
 
     public func cancel() {
-        queue.async { self.cancelled = true }
+        queue.async { self.cancelled = true; self.apiTask?.cancel() }
         if process.isRunning { process.terminate() }
     }
 

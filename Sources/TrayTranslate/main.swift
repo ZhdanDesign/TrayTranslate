@@ -3,9 +3,18 @@ import Foundation
 import TranslateCore
 
 // Headless mode for scripts and verification (text on stdin):
-//   TrayTranslate --translate [--engine claude|codex] [--runs N]
+//   TrayTranslate --translate [--engine claude|codex|openai] [--runs N]
 // Prints the translation and timings: first visible text and total.
 let args = Array(CommandLine.arguments.dropFirst())
+if args.contains("--self-test-hotkey") {
+    MainActor.assumeIsolated { HotKey.selfTest() }
+    exit(0)
+}
+if args.contains("--check-hotkey") {
+    let (allowed, running) = MainActor.assumeIsolated { (HotKey.isAllowed, HotKey().start()) }
+    print("Input Monitoring: \(allowed ? "allowed" : "denied"); keyboard tap: \(running ? "running" : "unavailable")")
+    exit(running ? 0 : 1)
+}
 if args.contains("--translate") {
     func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { args.indices.contains($0 + 1) ? args[$0 + 1] : nil } }
     let engines = value("--engine").flatMap(Engine.init(rawValue:)).map { [$0] } ?? Engine.allCases

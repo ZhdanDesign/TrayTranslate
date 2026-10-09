@@ -49,5 +49,30 @@ let cl = try claude.invocation(direction: .ruToEn, executable: exe, workDir: tmp
 check(cl.arguments.contains("claude-haiku-5-5") && cl.arguments.contains("--strict-mcp-config"), #line)
 check(cl.arguments.contains(Direction.ruToEn.instructions), #line)
 
+// OpenAI: request contents and response/error handling, without a real key or network.
+check(Engine.allCases.contains(.openai) && Engine.openai.model == "gpt-4o-mini", #line)
+let request = try OpenAI.request(text: "Hello\n\"world\"", direction: .enToRu, apiKey: "test-key")
+check(request.url?.absoluteString == "https://api.openai.com/v1/chat/completions", #line)
+check(request.httpMethod == "POST" && request.value(forHTTPHeaderField: "Authorization") == "Bearer test-key", #line)
+let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+check(body["model"] as? String == "gpt-4o-mini" && body["store"] as? Bool == false, #line)
+let messages = body["messages"] as! [[String: String]]
+check(messages == [["role": "system", "content": Direction.enToRu.instructions],
+                   ["role": "user", "content": "Hello\n\"world\""]], #line)
+check(try OpenAI.translation(data: Data(#"{"choices":[{"message":{"content":"Привет"},"finish_reason":"stop"}]}"#.utf8), status: 200) == "Привет", #line)
+for (json, status, expected) in [
+    (#"{"error":{"message":"Invalid API key"}}"#, 401, "HTTP 401: Invalid API key"),
+    (#"{"error":{"message":"Quota exceeded"}}"#, 429, "HTTP 429: Quota exceeded"),
+    ("not json", 502, "HTTP 502"),
+    ("not json", 200, "некорректный ответ"),
+    (#"{"choices":[{"message":{"content":" "}}]}"#, 200, "пустой"),
+    (#"{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}"#, 200, "обрезан"),
+] {
+    do { _ = try OpenAI.translation(data: Data(json.utf8), status: status); check(false, #line) }
+    catch { check(String(describing: error).contains(expected), #line) }
+}
+do { try OpenAI.saveAPIKey("   "); check(false, #line) }
+catch { check(String(describing: error).contains("Введите API-ключ"), #line) }
+
 print(failures == 0 ? "SelfTest: all passed" : "SelfTest: \(failures) failed")
 exit(failures == 0 ? 0 : 1)

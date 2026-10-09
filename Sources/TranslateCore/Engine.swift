@@ -1,12 +1,16 @@
 import Foundation
 
 public enum Engine: String, CaseIterable, Sendable {
-    case claude, codex
+    case claude, codex, openai
 
-    public var name: String { self == .claude ? "Claude" : "Codex" }
+    public var name: String {
+        switch self { case .claude: return "Claude"; case .codex: return "Codex"; case .openai: return "OpenAI" }
+    }
     /// Model IDs verified on this machine: `claude -p --model haiku` reports claude-haiku-5-5;
     /// `codex debug models` lists gpt-6-luna ("Fast and affordable model for easier tasks").
-    public var model: String { self == .claude ? "claude-haiku-5-5" : "gpt-6-luna" }
+    public var model: String {
+        switch self { case .claude: return "claude-haiku-5-5"; case .codex: return "gpt-6-luna"; case .openai: return "gpt-4o-mini" }
+    }
 
     public struct Invocation {
         public var executable: URL
@@ -47,6 +51,8 @@ public enum Engine: String, CaseIterable, Sendable {
         var env = environment
         env["PATH"] = (Self.searchDirs + [env["PATH"] ?? ""]).joined(separator: ":")
         switch self {
+        case .openai:
+            throw Translator.Failure(description: "OpenAI работает через API, без CLI")
         case .claude:
             let args = [
                 "-p", "--model", model,
